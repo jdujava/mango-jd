@@ -182,6 +182,7 @@ void reset_option(void) {
 			arrange(m, false, false);
 		}
 	}
+	layers_reapply_follow_mouse();
 }
 
 void reset_blur_params(void) {

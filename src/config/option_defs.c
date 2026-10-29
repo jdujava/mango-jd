@@ -1356,6 +1356,7 @@ bool parse_option(Config *config, char *key, char *value, int line_number) {
 
 		// Sets default values.
 		rule->layer_name = NULL;
+		rule->follow_mouse = -1;
 		rule->animation_type_open = ANIM_TYPE_UNSET;
 		rule->animation_type_close = ANIM_TYPE_UNSET;
 		rule->shield_when_capture = 0;
@@ -1377,6 +1378,8 @@ bool parse_option(Config *config, char *key, char *value, int line_number) {
 
 				if (strcmp(key, "layer_name") == 0) {
 					rule->layer_name = strdup(val);
+				} else if (strcmp(key, "follow_mouse") == 0) {
+					rule->follow_mouse = CLAMP_INT(atoi(val), 0, 1);
 				} else if (strcmp(key, "animation_type_open") == 0) {
 					rule->animation_type_open = animation_type_from_string(val);
 				} else if (strcmp(key, "animation_type_close") == 0) {

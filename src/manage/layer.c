@@ -12,6 +12,7 @@
 #include "mango/manage/monitor.h"
 #include <scenefx/types/wlr_scene.h>
 #include <wlr/types/wlr_compositor.h>
+#include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_xdg_shell.h>
@@ -156,6 +157,96 @@ void arrange_layers(Monitor *m) {
 		arrange_layer(m, &m->layers[i], &usable_area, 0);
 }
 
+static void layer_update_surface_scale(struct wlr_surface *surface, int sx,
+									  int sy, void *data) {
+	client_set_scale(surface, *(float *)data);
+}
+
+static void layer_apply_follow_policy(LayerSurface *l) {
+	l->follow_mouse = false;
+	for (int i = 0; i < config.layer_rules_count; i++) {
+		ConfigLayerRule *rule = &config.layer_rules[i];
+		if (rule->follow_mouse >= 0 &&
+			regex_match(rule->layer_name, l->layer_surface->namespace))
+			l->follow_mouse = rule->follow_mouse;
+	}
+}
+
+static void layer_follow_mouse(LayerSurface *l, Monitor *m) {
+	struct wlr_layer_surface_v1 *surface = l->layer_surface;
+	if (!m || !m->wlr_output->enabled || m->iscleanuping || !l->mon ||
+		l->mon == m || !l->follow_mouse || l->output_explicit || !l->mapped ||
+		l->being_unmapped || !surface->surface->mapped ||
+		surface->current.exclusive_zone > 0 ||
+		surface->current.keyboard_interactive !=
+			ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE)
+		return;
+
+	Monitor *oldmon = l->mon;
+	wl_list_remove(&l->link);
+	wl_list_insert(&m->layers[surface->current.layer], &l->link);
+	l->mon = m;
+	surface->output = m->wlr_output;
+
+	/* Move the existing surface, finishing any animation at its new anchor. */
+	struct wlr_box full = m->m, usable = m->w;
+	wlr_scene_layer_surface_v1_configure(l->scene_layer, &full, &usable);
+	get_layer_target_geometry(l, &l->geom);
+	l->animainit_geom = l->current = l->pending = l->animation.initial =
+		l->animation.current = l->geom;
+	l->animation.running = l->animation.should_animate = false;
+	l->animation.action = MOVE;
+	l->need_output_flush = true;
+	wlr_scene_node_set_position(&l->scene->node, l->geom.x, l->geom.y);
+	wlr_scene_node_set_position(&l->popups->node, l->geom.x, l->geom.y);
+
+	BufferData size = {.width_scale = 1.0f, .height_scale = 1.0f};
+	double opacity = 1.0;
+	wlr_scene_node_for_each_buffer(&l->scene->node,
+								   layer_scene_buffer_apply_effect, &size);
+	wlr_scene_node_for_each_buffer(&l->scene->node,
+								   scene_buffer_apply_opacity, &opacity);
+	if (l->blur) {
+		wlr_scene_blur_set_size(l->blur, l->geom.width, l->geom.height);
+		wlr_scene_blur_set_strength(l->blur, 1.0);
+		wlr_scene_blur_set_alpha(l->blur, 1.0);
+	}
+	layer_draw_shadow(l);
+	layer_draw_shield(l);
+	float scale = m->wlr_output->scale;
+	wlr_layer_surface_v1_for_each_surface(surface, layer_update_surface_scale,
+										 &scale);
+	wlr_output_schedule_frame(oldmon->wlr_output);
+	wlr_output_schedule_frame(m->wlr_output);
+}
+
+void layers_follow_mouse(Monitor *m) {
+	if (!m || server.session_locked)
+		return;
+	Monitor *oldmon;
+	wl_list_for_each(oldmon, &server.monitors, link) {
+		if (oldmon == m)
+			continue;
+		for (int i = 0; i < 4; i++) {
+			LayerSurface *l, *tmp;
+			wl_list_for_each_safe(l, tmp, &oldmon->layers[i], link)
+				layer_follow_mouse(l, m);
+		}
+	}
+}
+
+void layers_reapply_follow_mouse(void) {
+	Monitor *m;
+	wl_list_for_each(m, &server.monitors, link) {
+		for (int i = 0; i < 4; i++) {
+			LayerSurface *l;
+			wl_list_for_each(l, &m->layers[i], link)
+				layer_apply_follow_policy(l);
+		}
+	}
+	layers_follow_mouse(monitor_at_point(server.cursor->x, server.cursor->y));
+}
+
 void iter_layer_scene_buffers(struct wlr_scene_buffer *buffer, int32_t sx,
 							  int32_t sy, void *user_data) {
 	struct wlr_scene_surface *scene_surface =
@@ -212,6 +303,7 @@ void handle_layer_surface_map(struct wl_listener *listener, void *data) {
 	get_layer_target_geometry(l, &l->geom);
 
 	l->no_animation = 0;
+	layer_apply_follow_policy(l);
 	l->dirty = false;
 	l->shield_when_capture = false;
 	l->no_blur = 0;
@@ -269,6 +361,7 @@ void handle_layer_surface_map(struct wl_listener *listener, void *data) {
 	// Refreshes the layout so windows notice exclude_zone changes and sets the
 	// exclusive surface.
 	arrange_layers(l->mon);
+	layer_follow_mouse(l, monitor_at_point(server.cursor->x, server.cursor->y));
 	reset_exclusive_layers_focus(l->mon);
 	printstatus(IPC_WATCH_LAST_OPEN_SURFACE);
 }
@@ -508,6 +601,7 @@ void handle_new_layer_surface(struct wl_listener *listener, void *data) {
 	struct wlr_surface *surface = layer_surface->surface;
 	struct wlr_scene_tree *scene_layer =
 		server.layers[layermap[layer_surface->pending.layer]];
+	bool output_explicit = layer_surface->output != NULL;
 
 	if (!layer_surface->output &&
 		!(layer_surface->output = server.selected_monitor
@@ -518,6 +612,7 @@ void handle_new_layer_surface(struct wl_listener *listener, void *data) {
 	}
 
 	l = layer_surface->data = ecalloc(1, sizeof(*l));
+	l->output_explicit = output_explicit;
 	l->type = LayerShell;
 	l->animation_type_open = ANIM_TYPE_UNSET;
 	l->animation_type_close = ANIM_TYPE_UNSET;

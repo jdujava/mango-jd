@@ -1304,6 +1304,8 @@ void pointer_process_motion(uint32_t time, struct wlr_input_device *device,
 		}
 	}
 
+	layers_follow_mouse(monitor_at_point(server.cursor->x, server.cursor->y));
+
 	/* Find the client under the pointer and send the event along. */
 	node_at_point(server.cursor->x, server.cursor->y, &surface, &c, NULL, &bar,
 				  &sx, &sy);
@@ -1679,6 +1681,7 @@ void pointer_warp_to_monitor(Monitor *m) {
 		return;
 	wlr_cursor_warp_closest(server.cursor, NULL, m->w.x + m->w.width / 2.0,
 							m->w.y + m->w.height / 2.0);
+	layers_follow_mouse(monitor_at_point(server.cursor->x, server.cursor->y));
 	wlr_cursor_set_xcursor(server.cursor, server.cursor_manager, "default");
 	pointer_cursor_activity();
 }

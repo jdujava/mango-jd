@@ -251,9 +251,12 @@ layer_rule=layer_name:Values,Parameter:Values,Parameter:Values
 | `no_blur` | integer | `0` / `1` | Disable blur |
 | `no_animation` | integer | `0` / `1` | Disable layer animation |
 | `no_shadow` | integer | `0` / `1` | Disable layer shadow |
+| `follow_mouse` | integer | `0` / `1` | Move an existing non-exclusive, non-interactive layer to the pointer's output. Disabled by default; respects an application's explicitly selected output. |
 | `shield_when_capture`| integer | `0` / `1` | Shield layer when captured.(it is better to combination with `no_animation:1`) |
 
 > **Tip:** For animation types, see [Animations](/docs/visuals/animations#animation-types). For visual effects, see [Window Effects](/docs/visuals/effects).
+
+Reloading configuration updates `follow_mouse` for existing layers. The last matching rule that specifies it wins; removing all matching settings disables following.
 
 ### Examples
 
@@ -266,6 +269,9 @@ layer_rule=animation_type_open:zoom,no_animation:0,layer_name:rofi
 
 # Disable animations and shadows for notification daemon
 layer_rule=no_animation:1,no_shadow:1,layer_name:swaync
+
+# Keep visible Dunst notifications on the pointer's output
+layer_rule=layer_name:notifications,follow_mouse:1
 
 # Multiple effects for launcher
 layer_rule=animation_type_open:slide,animation_type_close:fade,no_blur:1,layer_name:wofi
