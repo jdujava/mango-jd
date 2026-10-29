@@ -69,6 +69,43 @@ static bool pointer_wsov_direct_layer_at(double x, double y,
 	return true;
 }
 
+static struct wl_event_source *focus_warp_idle;
+
+static void pointer_cancel_focus_warp(void) {
+	if (focus_warp_idle) {
+		wl_event_source_remove(focus_warp_idle);
+		focus_warp_idle = NULL;
+	}
+}
+
+static void pointer_warp_focused_idle(void *data) {
+	focus_warp_idle = NULL;
+	if (!config.warpcursor || server.session_locked ||
+		server.cursor_mode != CurNormal || server.start_drag_window ||
+		server.active_constraint || !server.selected_monitor ||
+		server.selected_monitor->isoverview ||
+		workspace_overview_is_active_on(server.selected_monitor))
+		return;
+
+	Client *c = server.selected_monitor->sel;
+	if (c && c->mon && !c->iskilling && VISIBLEON(c, c->mon) &&
+		client_surface(c)->mapped &&
+		server.seat->keyboard_state.focused_surface == client_surface(c))
+		pointer_warp_to_client(c);
+	else if (!c && !server.exclusive_focus)
+		pointer_warp_to_monitor(server.selected_monitor);
+	// Idle callbacks can otherwise wait for the next input before these
+	// pointer events reach clients, leaving their cached coordinates stale.
+	wl_display_flush_clients(server.display);
+}
+
+void pointer_schedule_focus_warp(void) {
+	if (config.warpcursor && server.cursor_mode == CurNormal &&
+		!server.start_drag_window && !focus_warp_idle)
+		focus_warp_idle = wl_event_loop_add_idle(
+			server.event_loop, pointer_warp_focused_idle, NULL);
+}
+
 static double pointer_surface_scale(Client *c) {
 #ifdef XWAYLAND
 	if (c && client_is_x11(c) && config.xwayland_ignore_scale &&
@@ -1532,6 +1569,11 @@ void pointer_focus(Client *c, struct wlr_surface *surface, double sx, double sy,
 		!client_is_unmanaged(c) && VISIBLEON(c, c->mon))
 		client_focus(c, 0);
 
+	// Actual mouse movement takes precedence over a pending keyboard/layout
+	// warp, including arrangements triggered by sloppy focus above.
+	if (time)
+		pointer_cancel_focus_warp();
+
 	/* Pointer-driven layer constraints: deactivate as soon as the pointer
 	 * leaves their surface. Toplevel constraints are managed by focusclient
 	 * (keyboard focus driven), so they are left untouched here. */
@@ -1671,15 +1713,26 @@ int32_t pointer_hide_cursor(void *data) {
 }
 
 void pointer_warp_to_client(const Client *c) {
-	if (INSIDEMON(c)) {
-		wlr_cursor_warp_closest(server.cursor, NULL,
-								c->geom.x + c->geom.width / 2.0,
-								c->geom.y + c->geom.height / 2.0);
+	if (c && c->no_warp)
+		return;
+	struct wlr_box visible;
+	if (c && c->mon && wlr_box_intersection(&visible, &c->geom, &c->mon->w)) {
+		// Preserve the pointer's position whenever the resulting window contains
+		// it. Geometry is the final layout, not an intermediate animation frame.
+		if (!wlr_box_contains_point(&visible, server.cursor->x, server.cursor->y))
+			wlr_cursor_warp_closest(server.cursor, NULL,
+									visible.x + visible.width / 2.0,
+									visible.y + visible.height / 2.0);
+		// Overlapping windows can change pointer focus without changing position.
 		pointer_process_motion(0, NULL, 0, 0, 0, 0);
+		// Programmatic motion has no hardware frame to flush these events.
+		wlr_seat_pointer_notify_frame(server.seat);
 	}
 }
 
 void pointer_warp_to_monitor(Monitor *m) {
+	if (!m || wlr_box_contains_point(&m->w, server.cursor->x, server.cursor->y))
+		return;
 	wlr_cursor_warp_closest(server.cursor, NULL, m->w.x + m->w.width / 2.0,
 							m->w.y + m->w.height / 2.0);
 	wlr_cursor_set_xcursor(server.cursor, server.cursor_manager, "default");

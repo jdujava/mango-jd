@@ -220,8 +220,39 @@ int32_t move_client(const Arg *arg) {
 	}
 
 	if (config.warpcursor)
-		pointer_warp_to_client(c);
+		pointer_schedule_focus_warp();
 	return 0;
+}
+
+/* Move one tiled client without swapping the intervening clients. */
+static void push_stack_client(Client *c, bool reverse) {
+	Client *other, *first = NULL, *last = NULL, *prev = NULL, *next = NULL;
+	bool passed = false;
+	wl_list_for_each(other, &server.clients, link) {
+		if (!VISIBLEON(other, c->mon) || other->isfloating ||
+			ISFULLSCREEN(other) || other->iskilling || client_is_parked(other))
+			continue;
+		if (other == c) {
+			passed = true;
+			continue;
+		}
+		if (!first)
+			first = other;
+		last = other;
+		if (!passed)
+			prev = other;
+		else if (!next)
+			next = other;
+	}
+	if (!first)
+		return;
+	wl_list_remove(&c->link);
+	if (reverse)
+		wl_list_insert(prev ? prev->link.prev : &last->link, &c->link);
+	else
+		wl_list_insert(next ? &next->link : first->link.prev, &c->link);
+	client_focus(c, 1);
+	arrange(c->mon, false, false);
 }
 
 int32_t exchange_stack_client(const Arg *arg) {
@@ -230,8 +261,12 @@ int32_t exchange_stack_client(const Arg *arg) {
 
 	Client *c = arg->tc ? arg->tc : server.selected_monitor->sel;
 	Client *tc = NULL;
-	if (!c || c->isfloating || c->isfullscreen || c->ismaximizescreen)
+	if (!c || !VISIBLEON(c, c->mon) || c->isfloating || ISFULLSCREEN(c))
 		return 0;
+	if (arg->ui) {
+		push_stack_client(c, arg->i != NEXT);
+		return 0;
+	}
 	if (arg->i == NEXT) {
 		tc = get_next_stack_client(c, false);
 	} else {
@@ -286,7 +321,7 @@ int32_t focus_direction(const Arg *arg) {
 	if (c) {
 		client_focus(c, 1);
 		if (config.warpcursor)
-			pointer_warp_to_client(c);
+			pointer_schedule_focus_warp();
 	} else {
 		// no cross-tag/monitor jumps inside the special workspace
 		if (!is_special_active(server.selected_monitor)) {
@@ -318,7 +353,7 @@ int32_t focus_window_or_workspace(const Arg *arg) {
 	if (c && c->mon == server.selected_monitor) {
 		client_focus(c, 1);
 		if (config.warpcursor)
-			pointer_warp_to_client(c);
+			pointer_schedule_focus_warp();
 		return 0;
 	}
 
@@ -518,7 +553,7 @@ int32_t focus_monitor(const Arg *arg) {
 
 	set_selected_monitor(tm);
 	if (config.warpcursor) {
-		pointer_warp_to_monitor(server.selected_monitor);
+		pointer_schedule_focus_warp();
 	}
 	c = arg->tc ? arg->tc : client_focus_top(server.selected_monitor);
 	if (!c) {
@@ -532,24 +567,32 @@ int32_t focus_monitor(const Arg *arg) {
 	return 0;
 }
 
+int32_t toggle_warp_cursor(const Arg *arg) {
+	config.warpcursor = !config.warpcursor;
+	if (config.warpcursor)
+		pointer_schedule_focus_warp();
+	return 0;
+}
+
 int32_t focus_stack(const Arg *arg) {
 	Client *sel = arg->tc ? arg->tc : client_focus_top(server.selected_monitor);
-	Client *tc = NULL;
 
-	if (!sel)
+	/* Like dwm, cycling stays on a real fullscreen client. Fake mode can cycle. */
+	if (!sel || sel->isfullscreen)
 		return 0;
-	if (arg->i == NEXT) {
-		tc = get_next_stack_client(sel, false);
-	} else {
-		tc = get_next_stack_client(sel, true);
-	}
 
-	if (!tc)
+	/* Utility windows can remain clickable without participating in cycling.
+	 * A no_focus client must also be skipped, rather than blocking the cycle. */
+	Client *tc = sel;
+	do {
+		tc = get_next_stack_client(tc, arg->i != NEXT);
+	} while (tc && tc != sel && (tc->no_focus || tc->skip_focusstack));
+	if (!tc || tc == sel)
 		return 0;
 
 	client_focus(tc, 1);
 	if (config.warpcursor)
-		pointer_warp_to_client(tc);
+		pointer_schedule_focus_warp();
 	return 0;
 }
 
@@ -952,7 +995,7 @@ int32_t restore_minimized(const Arg *arg) {
 	client_update_border_color(c);
 	client_focus(c, 1);
 	workspace_overview_client_tags_changed(c);
-	pointer_warp_to_client(c);
+	pointer_schedule_focus_warp();
 	return 0;
 }
 
@@ -968,6 +1011,8 @@ int32_t set_layout(const Arg *arg) {
 				&layouts[jk];
 			clear_fullscreen_and_maximized_state(server.selected_monitor);
 			arrange(server.selected_monitor, false, false);
+			if (config.warpcursor && server.selected_monitor->sel)
+				pointer_schedule_focus_warp();
 			printstatus(IPC_WATCH_ARRANGGE);
 			return 0;
 		}
@@ -1488,6 +1533,8 @@ int32_t switch_layout(const Arg *arg) {
 		}
 		clear_fullscreen_and_maximized_state(server.selected_monitor);
 		arrange(server.selected_monitor, false, false);
+		if (config.warpcursor && server.selected_monitor->sel)
+			pointer_schedule_focus_warp();
 		printstatus(IPC_WATCH_ARRANGGE);
 		return 0;
 	}
@@ -1499,6 +1546,8 @@ int32_t switch_layout(const Arg *arg) {
 				jk == LENGTH(layouts) - 1 ? &layouts[0] : &layouts[jk + 1];
 			clear_fullscreen_and_maximized_state(server.selected_monitor);
 			arrange(server.selected_monitor, false, false);
+			if (config.warpcursor && server.selected_monitor->sel)
+				pointer_schedule_focus_warp();
 			printstatus(IPC_WATCH_ARRANGGE);
 			return 0;
 		}
@@ -1516,6 +1565,7 @@ int32_t tag(const Arg *arg) {
 
 int32_t tag_monitor(const Arg *arg) {
 	Monitor *m = NULL, *cm = NULL;
+	const bool silent = arg->ui2;
 	if (!server.selected_monitor)
 		return 0;
 	Client *c = arg->tc ? arg->tc : client_focus_top(server.selected_monitor);
@@ -1548,31 +1598,51 @@ int32_t tag_monitor(const Arg *arg) {
 	uint32_t target;
 
 	if (c->mon == m) {
-		client_switch_view(&(Arg){.ui = newtags}, true);
+		if (!silent)
+			client_switch_view(&(Arg){.ui = newtags}, true);
 		return 0;
 	}
 
-	if (!client_set_monitor_adapted(c, m, newtags, true))
+	Monitor *oldmon = c->mon;
+	if (!oldmon)
 		return 0;
+
+	if (silent && c->isfocusing) {
+		c->isfocusing = false;
+		client_set_unfocused_opacity_animation(c);
+		if (c->foreign_toplevel)
+			wlr_foreign_toplevel_handle_v1_set_activated(c->foreign_toplevel, false);
+	}
+	if (!client_set_monitor_adapted(c, m, newtags, !silent))
+		return 0;
+
+	if (silent) {
+		if (c->isfloating && !ISFULLSCREEN(c))
+			resize(c, c->geom, (ResizeOpts){.interact = 1});
+		arrange(c->mon, false, false);
+		if (server.selected_monitor == oldmon)
+			client_focus(client_focus_top(oldmon), 1);
+		pointer_schedule_focus_warp();
+		return 0;
+	}
 
 	set_selected_monitor(c->mon);
 	target = get_tags_first_tag(c->tags);
 
 	client_switch_view(&(Arg){.ui = target}, true);
 	client_focus(c, 1);
-	if (c->isfloating) {
+	if (c->isfloating && !ISFULLSCREEN(c)) {
 		resize(c, c->geom, (ResizeOpts){.interact = 1});
 	} else {
 		arrange(server.selected_monitor, false, false);
 	}
 	if (config.warpcursor) {
-		pointer_warp_to_monitor(c->mon);
+		pointer_schedule_focus_warp();
 	}
 	return 0;
 }
 
 int32_t tag_silent(const Arg *arg) {
-	Client *fc = NULL;
 	Client *target_client =
 		arg->tc
 			? arg->tc
@@ -1584,12 +1654,7 @@ int32_t tag_silent(const Arg *arg) {
 	target_client->tags =
 		(arg->ui & TAG0_MASK) ? TAG0_MASK : (arg->ui & TAGMASK);
 	client_reparent_group(target_client);
-	wl_list_for_each(fc, &server.clients, link) {
-		if (fc && fc != target_client && target_client->tags & fc->tags &&
-			ISFULLSCREEN(fc) && !target_client->isfloating) {
-			clear_fullscreen_flag(fc);
-		}
-	}
+	clear_fullscreen_for_incoming_tiled_client(target_client);
 	client_focus(client_focus_top(server.selected_monitor), 1);
 	arrange(target_client->mon, false, false);
 	return 0;
@@ -1873,10 +1938,7 @@ int32_t toggle_fullscreen(const Arg *arg) {
 	sel->is_in_scratchpad = 0;
 	sel->isnamedscratchpad = 0;
 
-	if (sel->isfullscreen)
-		client_set_fullscreen(sel, 0, true);
-	else
-		client_set_fullscreen(sel, 1, true);
+	client_set_fullscreen(sel, !sel->fullscreen_requested, true);
 	return 0;
 }
 
@@ -2465,6 +2527,9 @@ void set_overview(const Arg *arg, bool enter, Monitor *m) {
 	if (!enter && sel && (sel->tags & target)) {
 		client_focus(sel, 1);
 	}
+
+	/* Covers overview entry/exit and keyboard jump-target selection. */
+	pointer_schedule_focus_warp();
 
 	return;
 }

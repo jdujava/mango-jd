@@ -125,6 +125,8 @@ struct Client {
 	int32_t xdg_geo_x, xdg_geo_y;
 	uint32_t configure_serial;
 	struct wlr_foreign_toplevel_handle_v1 *foreign_toplevel;
+	/* The app's request survives the fake preference; isfullscreen is geometry. */
+	bool fullscreen_requested;
 	int32_t isfloating, stayfocused, isurgent, isfullscreen, isfakefullscreen,
 		need_float_size_reduce, isminimized, isoverlay, no_size_hint,
 		ignore_maximize, ignore_minimize, idleinhibit_when_focus,
@@ -188,6 +190,8 @@ struct Client {
 	bool scratchpad_tagin;
 	bool fake_no_border;
 	int32_t no_focus;
+	int32_t no_warp;
+	int32_t skip_focusstack;
 	int32_t no_fade_in;
 	int32_t no_fade_out;
 	int32_t no_force_center;
