@@ -261,6 +261,7 @@ typedef struct {
 
 typedef struct {
 	char *layer_name; // Layout name
+	int32_t follow_mouse;
 	int32_t animation_type_open;
 	int32_t animation_type_close;
 	int32_t shield_when_capture;
