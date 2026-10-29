@@ -4926,6 +4926,8 @@ void handle_xwayland_surface_request_configure(struct wl_listener *listener,
 	if (client_is_unmanaged(c)) {
 		struct wlr_box xgeo = new_geo;
 		xwayland_logical_to_x11(&xgeo, c->xwayland_scale);
+		/* Held pointer events must use the popup's current scene position. */
+		c->geom = new_geo;
 		wlr_scene_node_set_position(&c->scene->node, new_geo.x, new_geo.y);
 		wlr_xwayland_surface_configure(c->surface.xwayland, xgeo.x, xgeo.y,
 									   xgeo.width, xgeo.height);
@@ -5088,6 +5090,8 @@ void handle_xwayland_surface_set_geometry(struct wl_listener *listener,
 	/* xwayland->x/y are X11 physical sizes; convert back to Wayland logical
 	 * coordinates. */
 	xwayland_x11_to_logical(&geo, c->xwayland_scale);
+	if (client_is_unmanaged(c))
+		c->geom = geo;
 	wlr_scene_node_set_position(&c->scene->node, geo.x, geo.y);
 	pointer_process_motion(0, NULL, 0, 0, 0, 0);
 }

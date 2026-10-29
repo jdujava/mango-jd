@@ -1539,6 +1539,24 @@ void pointer_focus(Client *c, struct wlr_surface *surface, double sx, double sy,
 		wlr_seat_pointer_notify_enter(server.seat, surface, sx, sy);
 
 		if (surface != old_focus) {
+			/* wlroots omits motion when enter already set these coordinates.
+			 * XWayland still needs it to synchronize its relative button device;
+			 * otherwise a later click can replay the previous motion delta. */
+			if (c && client_is_x11(c) &&
+				server.seat->pointer_state.focused_surface == surface) {
+				wlr_relative_pointer_manager_v1_send_relative_motion(
+					server.relative_pointer_manager, server.seat,
+					(uint64_t)time * 1000, 0, 0, 0, 0);
+				struct wl_resource *resource;
+				wl_resource_for_each(
+					resource, &server.seat->pointer_state.focused_client->pointers) {
+					if (wlr_seat_client_from_pointer_resource(resource))
+						wl_pointer_send_motion(resource, time,
+							wl_fixed_from_double(sx), wl_fixed_from_double(sy));
+				}
+				wlr_seat_pointer_notify_frame(server.seat);
+			}
+
 			struct wlr_pointer_constraint_v1 *constraint;
 			wl_list_for_each(constraint,
 							 &server.pointer_constraints->constraints, link) {
