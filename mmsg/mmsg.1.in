@@ -83,6 +83,10 @@ Examples:
 \fBmmsg dispatch movewin,10,100\fR
 .IP \(bu 2
 \fBmmsg dispatch movewin,10,100 client,4\fR
+.IP \(bu 2
+\fBmmsg dispatch seturgent,1 client,4\fR marks a background client and its
+tags urgent without focusing it. Use \fBseturgent,0\fR to clear urgency;
+focusing the client also clears it.
 .RE
 .SS "Persistent streams (watch)"
 \fBWatch\fR commands keep the connection open and continuously output JSON
