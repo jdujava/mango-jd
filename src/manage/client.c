@@ -943,7 +943,7 @@ bool check_hit_no_border(Client *c) {
 		hit_no_border = true;
 	}
 
-	if (config.no_border_when_single && c && c->mon &&
+	if (config.no_border_when_single && !c->isfloating && c->mon &&
 		((ISSCROLLTILED(c) && c->mon->visible_fake_tiling_clients == 1) ||
 		 c->mon->visible_clients == 1)) {
 		hit_no_border = true;
@@ -3026,7 +3026,7 @@ void client_focus(Client *c, int32_t lift) {
 		return;
 
 	/* Raise client in stacking order if requested */
-	if (c && lift) {
+	if (c && (lift || (config.merge_tile_borders && ISTILED(c)))) {
 		client_raise_group(c);
 		client_raise_tab(c);
 	}

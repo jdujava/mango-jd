@@ -112,7 +112,7 @@ cJSON *build_tags_json(Monitor *m) {
 
 	uint32_t active_tagset = get_monitor_active_tagset(m);
 	for (int tag = 1; tag <= config.tag_num; tag++) {
-		int numclients = 0;
+		int numclients = 0, focused_client_index = -1;
 		bool is_active = false, is_urgent = false;
 		uint32_t tag_bit = 1 << (tag - 1);
 		if (tag_bit & active_tagset)
@@ -124,6 +124,8 @@ cJSON *build_tags_json(Monitor *m) {
 				continue;
 			if (c->isurgent)
 				is_urgent = true;
+			if (m == server.selected_monitor && c == m->sel)
+				focused_client_index = numclients;
 			numclients++;
 		}
 		cJSON *tag_obj = cJSON_CreateObject();
@@ -133,6 +135,8 @@ cJSON *build_tags_json(Monitor *m) {
 		cJSON_AddStringToObject(tag_obj, "layout",
 								m->pertag->ltidxs[tag]->symbol);
 		cJSON_AddNumberToObject(tag_obj, "client_count", numclients);
+		cJSON_AddNumberToObject(tag_obj, "focused_client_index",
+								focused_client_index);
 		cJSON_AddItemToArray(tags_array, tag_obj);
 	}
 	return tags_array;
@@ -150,6 +154,7 @@ cJSON *monitor_active_client(Monitor *m) {
 	cJSON_AddNumberToObject(obj, "id", c->id);
 	cJSON_AddStringToObject(obj, "title", client_get_title(c));
 	cJSON_AddStringToObject(obj, "appid", client_get_appid(c));
+	cJSON_AddBoolToObject(obj, "is_floating", c->isfloating);
 	return obj;
 }
 

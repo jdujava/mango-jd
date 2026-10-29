@@ -5,6 +5,25 @@
 #include "mango/manage/monitor.h"
 #include "mango/manage/tab.h"
 
+// Use the effective border settings, not the previous layout's cached bw.
+// The same rectangular overlap applies to tile and deck; avoid custom strips.
+static int32_t shared_border_width(Monitor *m) {
+	if (!config.merge_tile_borders || m->visible_fake_tiling_clients < 2 ||
+		m->isoverview || !server.render_border ||
+		(server.enable_gaps && (m->gappih || m->gappiv || m->gappoh || m->gappov)))
+		return 0;
+	Client *c;
+	wl_list_for_each(c, &server.clients, link) {
+		if (!VISIBLEON(c, m) || !ISFAKETILED(c))
+			continue;
+		if (c->no_border || check_hit_no_border(c) || c->isfullscreen ||
+			c->ismaximizescreen || client_wants_group_bar(c) ||
+			c->tab_prev || c->tab_next)
+			return 0;
+	}
+	return config.borderpx;
+}
+
 void tile(Monitor *m) {
 	int32_t i, n = 0, h, r, ie = server.enable_gaps, mw, my, ty;
 	Client *c = NULL;
@@ -54,6 +73,8 @@ void tile(Monitor *m) {
 	else
 		mw = m->w.width - 2 * cur_gappoh + cur_gappih * ie;
 
+	const int32_t shared_border = shared_border_width(m);
+
 	i = 0;
 	my = ty = cur_gappov;
 
@@ -88,8 +109,9 @@ void tile(Monitor *m) {
 			client_tile_resize(c,
 							   (struct wlr_box){.x = m->w.x + cur_gappoh,
 												.y = m->w.y + my,
-												.width = mw - cur_gappih * ie,
-												.height = h},
+												.width = mw - cur_gappih * ie +
+													 (stack_num > 0 ? shared_border : 0),
+												.height = h + (r > 1 ? shared_border : 0)},
 							   0);
 			my += h +
 				  cur_gappiv * ie; // Accumulates using the theoretical height.
@@ -115,7 +137,7 @@ void tile(Monitor *m) {
 				(struct wlr_box){.x = m->w.x + mw + cur_gappoh,
 								 .y = m->w.y + ty,
 								 .width = m->w.width - mw - 2 * cur_gappoh,
-								 .height = h},
+								 .height = h + (r > 1 ? shared_border : 0)},
 				0);
 			ty += h +
 				  cur_gappiv * ie; // Accumulates using the theoretical height.
@@ -568,6 +590,7 @@ void deck(Monitor *m) {
 	else
 		mw = m->w.width - 2 * cur_gappoh;
 
+	const int32_t shared_border = shared_border_width(m);
 	i = my = 0;
 	wl_list_for_each(c, &server.clients, link) {
 		if (!VISIBLEON(c, m) || !ISFAKETILED(c))
@@ -579,8 +602,8 @@ void deck(Monitor *m) {
 			client_tile_resize(c,
 							   (struct wlr_box){.x = m->w.x + cur_gappoh,
 												.y = m->w.y + cur_gappov + my,
-												.width = mw,
-												.height = h},
+												.width = mw + (n > nmasters ? shared_border : 0),
+												.height = h + (i + 1 < MANGO_MIN(n, nmasters) ? shared_border : 0)},
 							   0);
 			my += h;
 		} else {
