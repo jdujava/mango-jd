@@ -13,3 +13,9 @@ util.o
 
 .envrc
 .direnv
+
+# Local Arch package outputs
+/packaging/src/
+/packaging/pkg/
+/packaging/*.pkg.tar.*
+/packaging/*.src.tar.*
