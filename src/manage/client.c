@@ -2075,6 +2075,10 @@ void handle_new_xdg_toplevel(struct wl_listener *listener, void *data) {
 		   handle_client_request_maximize);
 	LISTEN(&toplevel->events.request_minimize, &c->minimize,
 		   handle_client_request_minimize);
+	LISTEN(&toplevel->events.request_move, &c->request_move,
+		   handle_client_request_move);
+	LISTEN(&toplevel->events.request_resize, &c->request_resize,
+		   handle_client_request_resize);
 	LISTEN(&toplevel->events.set_title, &c->set_title, handle_client_set_title);
 }
 
@@ -2746,6 +2750,8 @@ void handle_client_destroy(struct wl_listener *listener, void *data) {
 	} else
 #endif
 	{
+		wl_list_remove(&c->request_move.link);
+		wl_list_remove(&c->request_resize.link);
 		wl_list_remove(&c->commit.link);
 		wl_list_remove(&c->map.link);
 		wl_list_remove(&c->unmap.link);
@@ -2762,6 +2768,31 @@ void handle_client_destroy(struct wl_listener *listener, void *data) {
 	switcher_remove_client(c);
 	pointer_client_destroyed(c);
 	free(c);
+}
+
+/* Native title bars use xdg_toplevel.move/resize. Keep tiled windows tiled;
+ * floating clients may start a grab only from their own current button press. */
+static bool client_can_request_grab(Client *c, struct wlr_seat_client *seat,
+								   uint32_t serial) {
+	struct wlr_surface *surface = server.seat->pointer_state.focused_surface;
+	return c->isfloating && !server.session_locked && seat->seat == server.seat &&
+		   surface && wlr_surface_get_root_surface(surface) == client_surface(c) &&
+		   wlr_seat_validate_pointer_grab_serial(server.seat, surface, serial);
+}
+
+void handle_client_request_move(struct wl_listener *listener, void *data) {
+	Client *c = wl_container_of(listener, c, request_move);
+	struct wlr_xdg_toplevel_move_event *event = data;
+	if (client_can_request_grab(c, event->seat, event->serial))
+		pointer_begin_move_resize(c, CurMove, server.cursor->x, server.cursor->y, 0);
+}
+
+void handle_client_request_resize(struct wl_listener *listener, void *data) {
+	Client *c = wl_container_of(listener, c, request_resize);
+	struct wlr_xdg_toplevel_resize_event *event = data;
+	if (client_can_request_grab(c, event->seat, event->serial))
+		pointer_begin_move_resize(c, CurResize, server.cursor->x, server.cursor->y,
+								  event->edges);
 }
 
 void handle_client_request_fullscreen(struct wl_listener *listener,
