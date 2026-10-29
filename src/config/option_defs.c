@@ -923,6 +923,8 @@ bool parse_option(Config *config, char *key, char *value, int line_number) {
 		config->special_gappoh = atoi(value);
 	} else if (strcmp(key, "special_gap_outer_vertical") == 0) {
 		config->special_gappov = atoi(value);
+	} else if (strcmp(key, "merge_tile_borders") == 0) {
+		config->merge_tile_borders = atoi(value);
 	} else if (strcmp(key, "border_px") == 0) {
 		config->borderpx = atoi(value);
 	} else if (strcmp(key, "group_bar_height") == 0) {
@@ -2484,6 +2486,7 @@ void set_value_default() {
 	config.idleinhibit_when_fullscreen = 0;
 
 	config.borderpx = 4;
+	config.merge_tile_borders = 0;
 	config.group_bar_height = 33;
 	config.tab_bar_height = 33;
 	config.title_message_bar_height = 52;
@@ -2921,6 +2924,7 @@ void override_config(void) {
 	config.special_gappoh = CLAMP_INT(config.special_gappoh, 0, 1000);
 	config.special_gappov = CLAMP_INT(config.special_gappov, 0, 1000);
 	config.borderpx = CLAMP_INT(config.borderpx, 0, 200);
+	config.merge_tile_borders = CLAMP_INT(config.merge_tile_borders, 0, 1);
 	config.group_bar_height = CLAMP_INT(config.group_bar_height, 0, 500);
 	config.tab_bar_height = CLAMP_INT(config.tab_bar_height, 0, 500);
 	config.title_message_bar_height =

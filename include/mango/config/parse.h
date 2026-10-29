@@ -487,6 +487,7 @@ typedef struct {
 	uint32_t special_gappoh;
 	uint32_t special_gappov;
 	uint32_t borderpx;
+	int32_t merge_tile_borders;
 	uint32_t group_bar_height;
 	uint32_t tab_bar_height;
 	uint32_t title_message_bar_height;

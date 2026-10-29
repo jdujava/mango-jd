@@ -1518,6 +1518,9 @@ void arrange(Monitor *m, bool want_animation, bool from_view) {
 	}
 
 	if (!server.start_drag_window) {
+		// Focused tiles must own their shared border even after layout changes.
+		if (config.merge_tile_borders && m->sel && ISTILED(m->sel))
+			client_raise_group(m->sel);
 		pointer_process_motion(0, NULL, 0, 0, 0, 0);
 		check_idle_inhibitor(NULL);
 	}
