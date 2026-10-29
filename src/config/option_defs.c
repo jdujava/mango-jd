@@ -901,6 +901,11 @@ bool parse_option(Config *config, char *key, char *value, int line_number) {
 		config->axis_scroll_factor = atof(value);
 	} else if (strcmp(key, "trackpad_scroll_factor") == 0) {
 		config->trackpad_scroll_factor = atof(value);
+	} else if (strcmp(key, "scroll_boost_modifier") == 0) {
+		uint32_t modifier = parse_mod(value);
+		config->scroll_boost_modifier = modifier == UINT32_MAX ? 0 : modifier;
+	} else if (strcmp(key, "scroll_boost_factor") == 0) {
+		config->scroll_boost_factor = atof(value);
 	} else if (strcmp(key, "gap_inner_horizontal") == 0) {
 		config->gappih = atoi(value);
 	} else if (strcmp(key, "gap_inner_vertical") == 0) {
@@ -2463,6 +2468,8 @@ void set_value_default() {
 	config.focus_cross_tag = 0;
 	config.axis_scroll_factor = 1.0;
 	config.trackpad_scroll_factor = 1.0;
+	config.scroll_boost_modifier = WLR_MODIFIER_ALT;
+	config.scroll_boost_factor = 4.0;
 	config.view_current_to_back = 0;
 	config.single_scratchpad = 1;
 	config.xwayland_persistence = 1;
@@ -2919,6 +2926,9 @@ void override_config(void) {
 		CLAMP_FLOAT(config.axis_scroll_factor, 0.1f, 10.0f);
 	config.trackpad_scroll_factor =
 		CLAMP_FLOAT(config.trackpad_scroll_factor, 0.1f, 10.0f);
+	if (!isfinite(config.scroll_boost_factor))
+		config.scroll_boost_factor = 4.0;
+	config.scroll_boost_factor = CLAMP_FLOAT(config.scroll_boost_factor, 1.0, 10.0);
 	config.gappih = CLAMP_INT(config.gappih, 0, 1000);
 	config.gappiv = CLAMP_INT(config.gappiv, 0, 1000);
 	config.gappoh = CLAMP_INT(config.gappoh, 0, 1000);

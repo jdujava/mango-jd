@@ -497,6 +497,13 @@ handle_cursor_axis(struct wl_listener *listener, void *data) {
 	target_scroll_factor = pointer_is_trackpad(event->pointer)
 							   ? config.trackpad_scroll_factor
 							   : config.axis_scroll_factor;
+	/* Match the modifier alone so combinations such as Ctrl+Alt keep their
+	 * normal application behavior. Axis bindings above still take precedence. */
+	if (config.scroll_boost_modifier &&
+		CLEANMASK(mods) == CLEANMASK(config.scroll_boost_modifier)) {
+		target_scroll_factor *= config.scroll_boost_factor;
+		keyboard_cancel_pending_release_bind();
+	}
 
 	wlr_seat_pointer_notify_axis(
 		server.seat, // Forwards the scroll event to the focused client (the

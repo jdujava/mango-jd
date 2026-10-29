@@ -421,6 +421,8 @@ typedef struct {
 
 	/* common pointer */
 	uint32_t send_events_mode;
+	uint32_t scroll_boost_modifier;
+	double scroll_boost_factor;
 
 	/* mouse */
 	int32_t mouse_natural_scrolling;
