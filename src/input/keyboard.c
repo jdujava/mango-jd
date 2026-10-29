@@ -189,7 +189,7 @@ int32_t keyboard_repeat(void *data) {
 								 1000 / group->keyboard->repeat_info.rate);
 
 	for (i = 0; i < group->nsyms; i++)
-		keyboard_check_keybinding(WL_KEYBOARD_KEY_STATE_PRESSED, false,
+		keyboard_check_keybinding(group, WL_KEYBOARD_KEY_STATE_PRESSED, false,
 								  group->mods, group->keysyms[i],
 								  group->keycode);
 
@@ -547,42 +547,55 @@ void keyboard_group_destroy(struct wl_listener *listener, void *data) {
 	free(group);
 }
 
-/* Keycodes swallowed by a keybinding while pressed. */
-#define KEYBOARD_MAX_BOUND_KEYS 32
-static uint32_t bound_keycodes[KEYBOARD_MAX_BOUND_KEYS];
-static int32_t bound_keycode_count = 0;
+static bool keyboard_key_consumed(KeyboardGroup *group, uint32_t keycode) {
+	for (size_t i = 0; i < group->num_consumed_keycodes; i++)
+		if (group->consumed_keycodes[i] == keycode)
+			return true;
+	return false;
+}
 
-static int32_t keyboard_bound_key_index(uint32_t keycode) {
-	for (int32_t i = 0; i < bound_keycode_count; i++) {
-		if (bound_keycodes[i] == keycode)
-			return i;
+static void keyboard_consume_key(KeyboardGroup *group, uint32_t keycode) {
+	if (!keyboard_key_consumed(group, keycode) &&
+		group->num_consumed_keycodes < WLR_KEYBOARD_KEYS_CAP)
+		group->consumed_keycodes[group->num_consumed_keycodes++] = keycode;
+}
+
+static bool keyboard_release_consumed_key(KeyboardGroup *group,
+										 uint32_t keycode) {
+	for (size_t i = 0; i < group->num_consumed_keycodes; i++) {
+		if (group->consumed_keycodes[i] == keycode) {
+			group->consumed_keycodes[i] =
+				group->consumed_keycodes[--group->num_consumed_keycodes];
+			return true;
+		}
 	}
-	return -1;
+	return false;
 }
 
-bool keyboard_is_bound_key(uint32_t keycode) {
-	return keyboard_bound_key_index(keycode) >= 0;
-}
-
-/* Record a key the compositor consumed, so clients never see it as held. */
-void keyboard_mark_bound_key(uint32_t keycode) {
-	if (bound_keycode_count >= KEYBOARD_MAX_BOUND_KEYS ||
-		keyboard_is_bound_key(keycode)) {
-		return;
+size_t keyboard_client_keycodes(struct wlr_keyboard *keyboard,
+							   uint32_t keycodes[WLR_KEYBOARD_KEYS_CAP]) {
+	KeyboardGroup *group = server.keyboard_group, *candidate;
+	if (!group || group->keyboard != keyboard) {
+		group = NULL;
+		wl_list_for_each(candidate, &server.standalone_keyboards, link)
+			if (candidate->keyboard == keyboard)
+				group = candidate;
+		wl_list_for_each(candidate, &server.virtual_keyboards, link)
+			if (candidate->keyboard == keyboard)
+				group = candidate;
 	}
-	bound_keycodes[bound_keycode_count++] = keycode;
+
+	/* wl_keyboard.enter carries held keys as well as ordinary key events.
+	 * A focus-changing shortcut must not enter the destination as a held key. */
+	size_t count = 0;
+	for (size_t i = 0; i < keyboard->num_keycodes; i++)
+		if (!group || !keyboard_key_consumed(group, keyboard->keycodes[i]))
+			keycodes[count++] = keyboard->keycodes[i];
+	return count;
 }
 
-/* Drop the key once it is released. */
-void keyboard_unmark_bound_key(uint32_t keycode) {
-	int32_t i = keyboard_bound_key_index(keycode);
-	if (i < 0) {
-		return;
-	}
-	bound_keycodes[i] = bound_keycodes[--bound_keycode_count];
-}
-
-int32_t keyboard_check_keybinding(uint32_t state, bool is_locked, uint32_t mods,
+int32_t keyboard_check_keybinding(KeyboardGroup *group, uint32_t state,
+								  bool is_locked, uint32_t mods,
 								  xkb_keysym_t sym, uint32_t keycode) {
 	/*
 	 * Here we handle compositor keybindings. This is when the compositor is
@@ -635,11 +648,12 @@ int32_t keyboard_check_keybinding(uint32_t state, bool is_locked, uint32_t mods,
 
 			if (!k->ispassapply) {
 				handled = 1;
-				/* Mark before running the binding: it may change focus. */
+				/* Record before invoking the action: it can change focus. */
 				if (state == WL_KEYBOARD_KEY_STATE_PRESSED)
-					keyboard_mark_bound_key(keycode);
+					keyboard_consume_key(group, keycode - 8);
 			} else {
 				handled = 0;
+				keyboard_release_consumed_key(group, keycode - 8);
 			}
 
 			if (k->func(&k->arg))
@@ -716,6 +730,10 @@ void handle_keyboard_key(struct wl_listener *listener, void *data) {
 		memcpy(group->keysyms, syms, sizeof(group->keysyms[0]) * nsyms);
 	syms = group->keysyms;
 
+	/* Consume the matching release regardless of current modifiers/focus.
+	 * Still evaluate release bindings so their configured action can run. */
+	bool consumed_release = event->state == WL_KEYBOARD_KEY_STATE_RELEASED &&
+		keyboard_release_consumed_key(group, event->keycode);
 	int32_t handled = 0;
 	uint32_t mods = wlr_keyboard_get_modifiers(group->keyboard);
 
@@ -756,16 +774,11 @@ void handle_keyboard_key(struct wl_listener *listener, void *data) {
 	}
 
 	for (i = 0; i < nsyms; i++)
-		handled = keyboard_check_keybinding(event->state, server.session_locked,
-											mods, syms[i], keycode) ||
+		handled = keyboard_check_keybinding(group, event->state,
+											server.session_locked, mods,
+											syms[i], keycode) ||
 				  handled;
-
-	/* The press was swallowed, so swallow its release too. */
-	if (event->state == WL_KEYBOARD_KEY_STATE_RELEASED &&
-		keyboard_is_bound_key(keycode)) {
-		keyboard_unmark_bound_key(keycode);
-		handled = 1;
-	}
+	handled = handled || consumed_release;
 
 	if (handled && group->keyboard->repeat_info.delay > 0 &&
 		event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
@@ -788,12 +801,14 @@ void handle_keyboard_key(struct wl_listener *listener, void *data) {
 
 		for (i = 0; i < nsyms; i++)
 			if (syms[i] == XKB_KEY_Escape) {
+				keyboard_consume_key(group, event->keycode);
 				toggle_jump(&(Arg){0});
 				return;
 			}
 
 		Client *target = keyboard_find_jump_client(m, keycode);
 		if (target != NULL) {
+			keyboard_consume_key(group, event->keycode);
 			client_focus(target, 1);
 			toggle_overview(&(Arg){.tc = target});
 			return;

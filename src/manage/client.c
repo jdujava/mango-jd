@@ -346,21 +346,14 @@ int32_t client_is_unmanaged(Client *c) {
 	return 0;
 }
 void client_notify_enter(struct wlr_surface *s, struct wlr_keyboard *kb) {
-	if (!kb) {
+	if (kb) {
+		uint32_t keycodes[WLR_KEYBOARD_KEYS_CAP];
+		size_t count = keyboard_client_keycodes(kb, keycodes);
+		wlr_seat_keyboard_notify_enter(server.seat, s, keycodes, count,
+									   &kb->modifiers);
+	} else {
 		wlr_seat_keyboard_notify_enter(server.seat, s, NULL, 0, NULL);
-		return;
 	}
-
-	size_t num_keys = 0;
-	uint32_t keys[WLR_KEYBOARD_KEYS_CAP];
-	/* Skip keys consumed by keybindings; they were never sent to clients. */
-	for (size_t i = 0; i < kb->num_keycodes && num_keys < WLR_KEYBOARD_KEYS_CAP;
-		 i++) {
-		if (!keyboard_is_bound_key(kb->keycodes[i] + 8))
-			keys[num_keys++] = kb->keycodes[i];
-	}
-	wlr_seat_keyboard_notify_enter(server.seat, s, keys, num_keys,
-								   &kb->modifiers);
 }
 
 void client_send_close(Client *c) {

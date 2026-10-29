@@ -32,6 +32,11 @@ typedef struct KeyboardGroup {
 	uint32_t keycode;
 	struct wl_event_source *key_repeat_source;
 
+	/* Held shortcut keys belong to Mango until their release, even if focus
+	 * changes or the user lets go of the modifier first. */
+	uint32_t consumed_keycodes[WLR_KEYBOARD_KEYS_CAP];
+	size_t num_consumed_keycodes;
+
 	struct wl_listener modifiers;
 	struct wl_listener key;
 	struct wl_listener destroy;
@@ -65,14 +70,14 @@ int32_t keyboard_repeat(void *data);
 
 bool is_keyboard_shortcut_inhibitor(struct wlr_surface *surface);
 
-int32_t keyboard_check_keybinding(uint32_t state, bool locked, uint32_t mods,
+int32_t keyboard_check_keybinding(KeyboardGroup *group, uint32_t state,
+								  bool locked, uint32_t mods,
 								  xkb_keysym_t sym, uint32_t keycode);
 
-void keyboard_cancel_pending_release_bind(void);
+size_t keyboard_client_keycodes(struct wlr_keyboard *keyboard,
+							   uint32_t keycodes[WLR_KEYBOARD_KEYS_CAP]);
 
-void keyboard_mark_bound_key(uint32_t keycode);
-void keyboard_unmark_bound_key(uint32_t keycode);
-bool keyboard_is_bound_key(uint32_t keycode);
+void keyboard_cancel_pending_release_bind(void);
 
 bool keyboard_process_global_keypress(struct wlr_surface *last_surface,
 									  struct wlr_keyboard *keyboard,
