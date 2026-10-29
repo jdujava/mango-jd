@@ -530,6 +530,12 @@ FuncType parse_func_name(char *func_name, Arg *arg, char *arg_value,
 		func = group_leave;
 	} else if (strcmp(func_name, "focusid") == 0) {
 		func = focus_by_id;
+	} else if (strcmp(func_name, "seturgent") == 0) {
+		if (*arg_value && strcmp(arg_value, "0") != 0 &&
+			strcmp(arg_value, "1") != 0)
+			return NULL;
+		func = set_client_urgent;
+		(*arg).i = strcmp(arg_value, "0") != 0;
 	} else if (strcmp(func_name, "incnmaster") == 0) {
 		func = inc_nmaster;
 		(*arg).i = atoi(arg_value);

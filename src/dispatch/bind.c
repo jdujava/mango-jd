@@ -2841,6 +2841,22 @@ int32_t focus_by_id(const Arg *arg) {
 	return 0;
 }
 
+int32_t set_client_urgent(const Arg *arg) {
+	Client *c = arg->tc;
+	/* Require an explicit target; attention requests never change focus. */
+	if (!c || !server.selected_monitor || !c->mon)
+		return 0;
+	if (arg->i && c == client_focus_top(server.selected_monitor))
+		return 0;
+	if (c->isurgent == arg->i)
+		return 0;
+	c->isurgent = arg->i;
+	if (client_surface(c)->mapped)
+		client_update_border_color(c);
+	printstatus(IPC_WATCH_ARRANGGE);
+	return 0;
+}
+
 int32_t load_config_file(const Arg *arg) {
 	snprintf(server.cli_config_path, sizeof(server.cli_config_path), "%s",
 			 arg->v);
