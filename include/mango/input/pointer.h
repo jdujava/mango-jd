@@ -78,6 +78,7 @@ void pointer_cursor_activity(void);
 int32_t pointer_hide_cursor(void *data);
 void pointer_warp_to_client(const Client *c);
 void pointer_warp_to_monitor(Monitor *m);
+void pointer_schedule_focus_warp(void);
 void handle_new_virtual_pointer(struct wl_listener *listener, void *data);
 
 #endif

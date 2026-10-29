@@ -3,6 +3,7 @@
 #include "mango/common/server.h"
 #include "mango/common/util.h"
 #include "mango/draw/title-message-bar.h"
+#include "mango/input/pointer.h"
 #include "mango/layout/dwindle.h"
 #include "mango/layout/layout.h"
 #include "mango/manage/client.h"
@@ -1395,6 +1396,13 @@ void client_apply_finish_geometry(Client *c) {
 		c->pending = c->current = c->geom;
 	client_apply_clip(c, 1.0);
 	c->need_output_flush = false;
+	// Refresh surface-relative coordinates after the rendered geometry catches
+	// up with an arrangement/animation, without moving the physical cursor.
+	if (c->mon && c->mon == server.selected_monitor && c == c->mon->sel &&
+		server.cursor_mode == CurNormal && !server.start_drag_window) {
+		pointer_process_motion(0, NULL, 0, 0, 0, 0);
+		wlr_seat_pointer_notify_frame(server.seat);
+	}
 }
 void client_animation_set_progress(Client *c, double p) {
 	if (!c || !c->scene)

@@ -1475,6 +1475,10 @@ void arrange(Monitor *m, bool want_animation, bool from_view) {
 	if (!m->wlr_output->enabled)
 		return;
 
+	Client *focused_before = m->sel;
+	struct wlr_box focus_geometry = focused_before ? focused_before->geom :
+		(struct wlr_box){0};
+
 	if (!m->sel) {
 		m->sel = client_focus_top(m);
 	}
@@ -1521,6 +1525,10 @@ void arrange(Monitor *m, bool want_animation, bool from_view) {
 		// Focused tiles must own their shared border even after layout changes.
 		if (config.merge_tile_borders && m->sel && ISTILED(m->sel))
 			client_raise_group(m->sel);
+		if (m == server.selected_monitor &&
+			(from_view || focused_before != m->sel ||
+			 (m->sel && !wlr_box_equal(&focus_geometry, &m->sel->geom))))
+			pointer_schedule_focus_warp();
 		pointer_process_motion(0, NULL, 0, 0, 0, 0);
 		check_idle_inhibitor(NULL);
 	}

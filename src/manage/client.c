@@ -386,6 +386,7 @@ void client_set_state_colors(Client *c, const float border_color[4],
 }
 
 void client_set_fullscreen(Client *c, int32_t fullscreen) {
+	c->fullscreen_requested = fullscreen;
 #ifdef XWAYLAND
 	if (client_is_x11(c)) {
 		wlr_xwayland_surface_set_fullscreen(c->surface.xwayland, fullscreen);
@@ -1514,6 +1515,8 @@ void apply_rule_properties(Client *c, const ConfigWinRule *r) {
 	APPLY_INT_PROP(c, r, no_swallow);
 	APPLY_INT_PROP(c, r, confine_pointer);
 	APPLY_INT_PROP(c, r, no_focus);
+	APPLY_INT_PROP(c, r, no_warp);
+	APPLY_INT_PROP(c, r, skip_focusstack);
 	APPLY_INT_PROP(c, r, no_fade_in);
 	APPLY_INT_PROP(c, r, no_fade_out);
 	APPLY_INT_PROP(c, r, no_force_center);
@@ -1762,10 +1765,13 @@ void client_apply_rules(Client *c, Monitor **rule_mon, uint32_t *rule_tags) {
 
 	// apply swallow rule
 	c->pid = client_get_pid(c);
+	bool hidden_swallow = false;
 	if (!c->no_swallow && !c->isfloating && !client_is_float_type(c) &&
 		!c->surface.xdg->initial_commit) {
 		Client *p = client_find_terminal(c);
 		if (p && !p->isminimized) {
+			/* Replace a hidden terminal without changing the user's view or MRU. */
+			hidden_swallow = p->mon && !VISIBLEON(p, p->mon);
 			c->swallowing = p;
 			p->swallowdby = c;
 
@@ -1776,14 +1782,14 @@ void client_apply_rules(Client *c, Monitor **rule_mon, uint32_t *rule_tags) {
 	}
 
 	int32_t fullscreen_state_backup =
-		c->isfullscreen || client_wants_fullscreen(c);
+		c->fullscreen_requested || c->isfullscreen || client_wants_fullscreen(c);
 
 	bool should_init_get_focus =
-		!c->isopensilent &&
+		!hidden_swallow && !c->isopensilent &&
 		!(client_is_x11_popup(c) && client_should_ignore_focus(c)) && mon &&
 		(!c->istagsilent || !newtags || (newtags & mon->tagset[mon->seltags]));
 
-	if (!should_init_get_focus) {
+	if (!should_init_get_focus && !hidden_swallow) {
 		wl_list_safe_reinsert_prev(&server.focus_stack, &c->flink);
 	}
 
@@ -1795,7 +1801,7 @@ void client_apply_rules(Client *c, Monitor **rule_mon, uint32_t *rule_tags) {
 		c->old_master_inner_per = c->master_inner_per;
 	}
 
-	if (c->mon &&
+	if (!hidden_swallow && c->mon &&
 		!(c->mon == server.selected_monitor &&
 		  c->tags & c->mon->tagset[c->mon->seltags]) &&
 		!c->isopensilent && !c->istagsilent) {
@@ -1804,10 +1810,6 @@ void client_apply_rules(Client *c, Monitor **rule_mon, uint32_t *rule_tags) {
 	}
 
 	client_apply_fullscreen(c, fullscreen_state_backup, true);
-
-	if (c->isfakefullscreen) {
-		client_set_fake_fullscreen(c, 1);
-	}
 
 	/*
 	if there is a new non-floating window in the current tag, the fullscreen
@@ -2132,6 +2134,7 @@ void init_client_properties(Client *c) {
 	c->isleftstack = 0;
 	c->ismaximizescreen = 0;
 	c->isfullscreen = 0;
+	c->fullscreen_requested = false;
 	c->need_float_size_reduce = 0;
 	c->iskilling = 0;
 	c->isglobal = 0;
@@ -2154,6 +2157,8 @@ void init_client_properties(Client *c) {
 	c->focused_opacity = config.focused_opacity;
 	c->unfocused_opacity = config.unfocused_opacity;
 	c->no_focus = 0;
+	c->no_warp = 0;
+	c->skip_focusstack = 0;
 	c->no_fade_in = 0;
 	c->no_fade_out = 0;
 	c->no_force_center = 0;
@@ -2274,9 +2279,11 @@ static void client_negotiate_initial_size(Client *c, Monitor *rule_mon,
 	client_reset_mon_tags(c, m, rule_tags);
 	check_match_tag_floating_rule(c, m);
 
-	if (c->isfloating || c->isfullscreen || c->ismaximizescreen ||
-		client_wants_fullscreen(c)) {
-		if (c->isfullscreen || client_wants_fullscreen(c))
+	const bool real_fullscreen =
+		!c->isfakefullscreen &&
+		(c->fullscreen_requested || c->isfullscreen || client_wants_fullscreen(c));
+	if (c->isfloating || real_fullscreen || c->ismaximizescreen) {
+		if (real_fullscreen)
 			client_configure_size(c, m->m, 0);
 		else if (c->ismaximizescreen)
 			client_configure_size(c, m->w, bw);
@@ -2457,6 +2464,9 @@ void handle_client_map(struct wl_listener *listener, void *data) {
 	// make sure the animation is open type
 	c->is_pending_open_animation = true;
 	resize(c, c->geom, (ResizeOpts){.interact = 0});
+	/* Rules/layout chose this new window: use its settled target geometry. */
+	if (server.selected_monitor && server.selected_monitor->sel == c)
+		pointer_schedule_focus_warp();
 	printstatus(IPC_WATCH_ARRANGGE);
 }
 
@@ -2480,6 +2490,8 @@ void handle_client_commit(struct wl_listener *listener, void *data) {
 		Monitor *rule_mon = NULL;
 		uint32_t rule_tags = 0;
 		client_apply_rules(c, &rule_mon, &rule_tags);
+		/* Match the first configure's fullscreen state to its negotiated size. */
+		client_set_fullscreen(c, c->isfullscreen || client_wants_fullscreen(c));
 		client_negotiate_initial_size(c, rule_mon, rule_tags);
 		if (c->mon) {
 			client_set_scale(client_surface(c), c->mon->wlr_output->scale);
@@ -2549,6 +2561,8 @@ void handle_client_unmap(struct wl_listener *listener, void *data) {
 	/* Called when the surface is unmapped, and should no longer be shown.
 	 */
 	Client *c = wl_container_of(listener, c, unmap);
+	const bool was_focused = c->mon && c->mon == server.selected_monitor &&
+							  c->mon->sel == c;
 	Monitor *m = NULL;
 	Client *nextfocus = NULL;
 	c->iskilling = 1;
@@ -2571,11 +2585,15 @@ void handle_client_unmap(struct wl_listener *listener, void *data) {
 	// If the client is in a stack, remove it from the stack
 
 	if (c->swallowing) {
+		if (was_focused)
+			nextfocus = c->swallowing;
 		c->swallowing->mon = c->mon;
 		client_replace(c->swallowing, c, false, true);
 	} else if (client_is_group_member(c) && c->is_group_focus) {
 		Client *group_replacement =
 			c->group_next ? c->group_next : c->group_prev;
+		if (was_focused)
+			nextfocus = group_replacement;
 		group_replacement->mon = c->mon;
 		client_replace(group_replacement, c, false, false);
 	} else {
@@ -2609,12 +2627,12 @@ void handle_client_unmap(struct wl_listener *listener, void *data) {
 		}
 	}
 
-	if (c->mon && c->mon == server.selected_monitor) {
-		if (next_node && !c->swallowing) {
+	if (was_focused) {
+		if (!nextfocus && next_node && !c->swallowing) {
 			nextfocus = next_node->client;
-		} else if (prev_node && !c->swallowing) {
+		} else if (!nextfocus && prev_node && !c->swallowing) {
 			nextfocus = prev_node->client;
-		} else {
+		} else if (!nextfocus) {
 			nextfocus = client_focus_top(server.selected_monitor);
 		}
 
@@ -2679,7 +2697,7 @@ void handle_client_unmap(struct wl_listener *listener, void *data) {
 
 	if (c->swallowing) {
 		client_set_maximize_screen(c->swallowing, c->ismaximizescreen, true);
-		client_apply_fullscreen(c->swallowing, c->isfullscreen, true);
+		client_apply_fullscreen(c->swallowing, c->fullscreen_requested, true);
 		c->swallowing->swallowdby = NULL;
 		c->swallowing = NULL;
 	}
@@ -2711,6 +2729,9 @@ void handle_client_unmap(struct wl_listener *listener, void *data) {
 
 	wlr_scene_node_destroy(&c->scene->node);
 	printstatus(IPC_WATCH_ARRANGGE);
+	/* Only closing the focused client requests a new cursor placement. */
+	if (was_focused)
+		pointer_schedule_focus_warp();
 	pointer_process_motion(0, NULL, 0, 0, 0, 0);
 }
 
@@ -2845,7 +2866,15 @@ void handle_client_activation_request(struct wl_listener *listener,
 			}
 			return;
 		}
-		client_active(c);
+		if (c->is_in_scratchpad) {
+			client_active(c);
+			return;
+		}
+		/* An already visible client must not replace the user's tag view. */
+		if (!(c->mon == server.selected_monitor &&
+			  c->tags & c->mon->tagset[c->mon->seltags]))
+			client_view_on_monitor(&(Arg){.ui = c->tags}, true, c->mon, true);
+		client_focus(c, 1);
 	} else if (c != client_focus_top(server.selected_monitor)) {
 		c->isurgent = 1;
 		if (client_surface(c)->mapped)
@@ -3098,6 +3127,8 @@ void client_focus(Client *c, int32_t lift) {
 	client_ensure_constraint(c);
 
 	pointer_check_confine_client();
+	if (lift)
+		pointer_schedule_focus_warp();
 }
 
 void client_active(Client *c) {
@@ -3220,19 +3251,13 @@ void client_switch_view(const Arg *arg, bool want_animation) {
 }
 
 void tag_client(const Arg *arg, Client *target_client) {
-	Client *fc = NULL;
 	if (target_client && (arg->ui & (TAGMASK | TAG0_MASK))) {
 
 		target_client->tags =
 			(arg->ui & TAG0_MASK) ? TAG0_MASK : (arg->ui & TAGMASK);
 		client_reparent_group(target_client);
 
-		wl_list_for_each(fc, &server.clients, link) {
-			if (fc && fc != target_client && target_client->tags & fc->tags &&
-				ISFULLSCREEN(fc) && !target_client->isfloating) {
-				clear_fullscreen_flag(fc);
-			}
-		}
+		client_clear_tag_fullscreen(target_client);
 		if (arg->ui & TAG0_MASK) {
 			arrange(target_client->mon, false, false);
 		}
@@ -3271,6 +3296,7 @@ void show_hide_client(Client *c) {
 
 void client_set_monitor(Client *c, Monitor *m, uint32_t newtags, bool focus) {
 	Monitor *oldmon = c->mon;
+	const bool fullscreen_requested = c->fullscreen_requested || c->isfullscreen;
 
 	if (oldmon == m)
 		return;
@@ -3295,11 +3321,17 @@ void client_set_monitor(Client *c, Monitor *m, uint32_t newtags, bool focus) {
 	if (m) {
 		/* Make sure window actually overlaps with the monitor */
 		reset_foreign_tolevel(c, oldmon, m);
-		resize(c, c->geom, (ResizeOpts){.interact = 0});
 		client_reset_mon_tags(c, m, newtags);
 		check_match_tag_floating_rule(c, m);
-		client_set_floating(c, c->isfloating);
-		client_apply_fullscreen(c, c->isfullscreen,
+		if (oldmon)
+			client_clear_tag_fullscreen(c);
+		/* Fullscreen assignment must not clear the request or configure the
+		 * ordinary floating size before restoring the fullscreen geometry. */
+		if (!fullscreen_requested || c->isfakefullscreen) {
+			resize(c, c->geom, (ResizeOpts){.interact = 0});
+			client_set_floating(c, c->isfloating);
+		}
+		client_apply_fullscreen(c, fullscreen_requested,
 								true); /* This will call arrange(c->mon) */
 	}
 
@@ -3456,12 +3488,12 @@ void client_apply_fullscreen(
 	if (c->mon->isoverview)
 		return;
 
-	c->isfullscreen = fullscreen;
-
+	const bool was_fullscreen = c->isfullscreen;
+	const bool real_fullscreen = fullscreen && !c->isfakefullscreen;
 	client_set_fullscreen(c, fullscreen);
-	client_pending_fullscreen_state(c, fullscreen);
+	client_pending_fullscreen_state(c, real_fullscreen);
 
-	if (fullscreen) {
+	if (real_fullscreen) {
 
 		if (c->ismaximizescreen && !c->force_fakemaximize) {
 			client_set_maximized(c, false);
@@ -3470,15 +3502,13 @@ void client_apply_fullscreen(
 		client_pending_maximized_state(c, 0);
 
 		exit_scroller_stack(c);
-		c->isfakefullscreen = 0;
-
 		c->bw = 0;
 		if (!is_scroller_layout(c->mon) || c->isfloating)
 			resize(c, c->mon->m, (ResizeOpts){.interact = 1});
 
 	} else {
 		c->bw = c->no_border ? 0 : config.borderpx;
-		if (c->isfloating)
+		if (was_fullscreen && c->isfloating)
 			client_set_floating(c, 1);
 	}
 
@@ -3491,14 +3521,11 @@ void client_apply_fullscreen(
 }
 
 void client_set_fake_fullscreen(Client *c, int32_t fakefullscreen) {
-	c->isfakefullscreen = fakefullscreen;
-	if (!c->mon)
+	if (!c || !c->mon || c->mon->isoverview || c == server.grab_client)
 		return;
-
-	if (c->isfullscreen)
-		client_apply_fullscreen(c, 0, true);
-
-	client_set_fullscreen(c, fakefullscreen);
+	/* A preference, not a fullscreen request: convert an active request in place. */
+	c->isfakefullscreen = fakefullscreen;
+	client_apply_fullscreen(c, c->fullscreen_requested, true);
 }
 
 static void maximize_screen_gaps(Client *c, int32_t *gappoh, int32_t *gappov) {
@@ -3653,6 +3680,21 @@ void exit_scroller_stack(Client *c) {
 			scroller_node_remove(st, n);
 			return;
 		}
+	}
+}
+
+/* A tiled arrival joins the destination tag's fullscreen windows in tiling,
+ * including hidden tags, without changing other outputs or floating dialogs. */
+void client_clear_tag_fullscreen(Client *c) {
+	Client *other;
+
+	if (!c || !c->mon || c->isfloating)
+		return;
+
+	wl_list_for_each(other, &server.clients, link) {
+		if (other != c && other->mon == c->mon && (other->tags & c->tags) &&
+			ISFULLSCREEN(other))
+			clear_fullscreen_flag(other);
 	}
 }
 
@@ -3970,6 +4012,7 @@ void client_replace(Client *c, Client *w, bool is_group_change_member,
 	}
 
 	client_pending_fullscreen_state(c, w->isfullscreen);
+	c->fullscreen_requested = w->fullscreen_requested;
 	client_pending_maximized_state(c, w->ismaximizescreen);
 	client_pending_minimized_state(c, w->isminimized);
 
@@ -4197,7 +4240,7 @@ void finish_exchange_arrange_and_focus(Client *c1, Client *c2, Monitor *m1,
 	wl_list_safe_reinsert_next(&c1->flink, &c2->flink);
 
 	if (config.warpcursor)
-		pointer_warp_to_client(c1);
+		pointer_schedule_focus_warp();
 }
 
 void client_tile_resize(Client *c, struct wlr_box geo, int32_t interact,
@@ -4808,7 +4851,10 @@ void handle_xwayland_surface_request_activate(struct wl_listener *listener,
 	if (c && c->swallowdby)
 		return;
 
-	if (c->tags & TAG0_MASK) {
+	const bool may_focus = config.focus_on_activate && !c->istagsilent &&
+						   c != server.selected_monitor->sel;
+
+	if (may_focus && (c->tags & TAG0_MASK)) {
 		if (is_special_active(c->mon)) {
 			client_focus(c, 1);
 		} else {
@@ -4817,12 +4863,13 @@ void handle_xwayland_surface_request_activate(struct wl_listener *listener,
 		return;
 	}
 
-	if (c->is_in_scratchpad) {
+	if (may_focus && c->is_in_scratchpad) {
 		client_active(c);
 		return;
 	}
 
-	if (c->isminimized) {
+	/* A denied activation must not unhide or detach a scratchpad client. */
+	if (c->isminimized && !c->is_in_scratchpad) {
 		client_pending_minimized_state(c, 0);
 		c->tags = c->mon->tagset[c->mon->seltags];
 		c->is_in_scratchpad = 0;
@@ -4833,8 +4880,7 @@ void handle_xwayland_surface_request_activate(struct wl_listener *listener,
 		}
 	}
 
-	if (config.focus_on_activate && !c->istagsilent &&
-		c != server.selected_monitor->sel) {
+	if (may_focus) {
 		if (!(c->mon == server.selected_monitor &&
 			  c->tags & c->mon->tagset[c->mon->seltags]))
 			client_view_on_monitor(&(Arg){.ui = c->tags}, true, c->mon, true);

@@ -547,6 +547,7 @@ FuncType parse_func_name(char *func_name, Arg *arg, char *arg_value,
 	} else if (strcmp(func_name, "exchange_stack_client") == 0) {
 		func = exchange_stack_client;
 		(*arg).i = parse_circle_direction(arg_value);
+		(*arg).ui = strcmp(arg_value2, "move") == 0;
 	} else if (strcmp(func_name, "toggleglobal") == 0) {
 		func = toggle_global;
 	} else if (strcmp(func_name, "togglehdr") == 0) {
@@ -605,6 +606,8 @@ FuncType parse_func_name(char *func_name, Arg *arg, char *arg_value,
 		func = center_window;
 	} else if (strcmp(func_name, "focuslast") == 0) {
 		func = focus_last;
+	} else if (strcmp(func_name, "toggle_warp_cursor") == 0) {
+		func = toggle_warp_cursor;
 	} else if (strcmp(func_name, "switcher") == 0) {
 		func = switcher;
 		if (strcmp(arg_value, "all_next") == 0) {
@@ -709,6 +712,8 @@ FuncType parse_func_name(char *func_name, Arg *arg, char *arg_value,
 		func = tag_monitor;
 		(*arg).i = parse_monitor_arg(arg_value);
 		(*arg).i2 = atoi(arg_value2);
+		(*arg).ui2 = strcmp(arg_value2, "silent") == 0 ||
+					strcmp(arg_value3, "silent") == 0;
 		if ((*arg).i == UNDIR) {
 			(*arg).v = strdup(arg_value);
 		};

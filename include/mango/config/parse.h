@@ -142,6 +142,8 @@ typedef struct {
 	float width;
 	float height;
 	int32_t no_focus;
+	int32_t no_warp;
+	int32_t skip_focusstack;
 	int32_t no_fade_in;
 	int32_t no_fade_out;
 	int32_t no_force_center;

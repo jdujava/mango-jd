@@ -600,6 +600,7 @@ cJSON *build_client_json(Client *c) {
 	cJSON_AddBoolToObject(obj, "is_visible", c->mon && VISIBLEON(c, c->mon));
 	cJSON_AddBoolToObject(obj, "is_focused", c->isfocusing);
 	cJSON_AddBoolToObject(obj, "is_fullscreen", c->isfullscreen);
+	cJSON_AddBoolToObject(obj, "is_fullscreen_requested", c->fullscreen_requested);
 	cJSON_AddBoolToObject(obj, "is_floating", c->isfloating);
 	cJSON_AddBoolToObject(obj, "is_maximized", c->ismaximizescreen);
 	cJSON_AddBoolToObject(obj, "is_global", c->isglobal);
