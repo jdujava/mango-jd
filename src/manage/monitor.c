@@ -1277,13 +1277,18 @@ void output_manager_apply_or_test(struct wlr_output_configuration_v1 *config,
 		ok &= test ? wlr_output_test_state(wlr_output, &state)
 				   : wlr_output_commit_state(wlr_output, &state);
 
-		/* Don't move monitors if position wouldn't change, this to avoid
-		 * wlroots marking the output as manually configured.
-		 * wlr_output_layout_add does not like disabled outputs */
-		if (!test && wlr_output->enabled &&
-			(m->m.x != config_head->state.x || m->m.y != config_head->state.y))
-			wlr_output_layout_add(server.output_layout, wlr_output,
-								  config_head->state.x, config_head->state.y);
+		/* Requested coordinates are explicit, even at (0, 0). An automatic
+		 * entry must become manual so another head cannot move it later.
+		 * Skip only unchanged manual entries, using the actual layout. */
+		if (!test && wlr_output->enabled) {
+			struct wlr_output_layout_output *layout_output =
+				wlr_output_layout_get(server.output_layout, wlr_output);
+			if (!layout_output || layout_output->auto_configured ||
+				layout_output->x != config_head->state.x ||
+				layout_output->y != config_head->state.y)
+				wlr_output_layout_add(server.output_layout, wlr_output,
+									  config_head->state.x, config_head->state.y);
+		}
 
 		wlr_output_state_finish(&state);
 	}
